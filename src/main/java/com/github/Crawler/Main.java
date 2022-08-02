@@ -67,7 +67,7 @@ public class Main {
         HttpEntity entity1 = response1.getEntity();
 
         //加入UTF-8后不在出现中文乱码问题
-        String html = EntityUtils.toString(entity1,"UTF-8");
+        String html = EntityUtils.toString(entity1, "UTF-8");
 
         //Jsoup解析html，游览器发起请求后会得到html字符串的响应 游览器解析它
         Document doc = Jsoup.parse(html);
