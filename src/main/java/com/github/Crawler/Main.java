@@ -1,5 +1,6 @@
 package com.github.Crawler;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
@@ -12,20 +13,27 @@ import org.jsoup.nodes.Element;
 
 import java.io.IOException;
 import java.net.URL;
+import java.sql.*;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 public class Main {
-    public static void main(String[] args) throws IOException {
-        //未处理的池
-        List<String> listPool = new ArrayList<>();
-        //处理的池
-        Set<String> processedPool = new HashSet<>();
-        //刚开始池子里的连接
-        listPool.add("https://www.sina.com.cn/");
+    private static String NAME = "root";
+    private static String PASSWORD = "123";
+    public static void main(String[] args) throws IOException, SQLException {
+
+        Connection connection = DriverManager.getConnection("jdbc:h2:file:C:/Users/86183/Desktop/projects/target/news", NAME, PASSWORD);
+
         while (true) {
+            //未处理的池,从数据库中拿连接
+            List<String> listPool = loadUrlsFromDatabase(connection, "select * from LINKS_TO_BE_PROCESSED");
+
+            //处理的池
+            @SuppressFBWarnings
+            Set<String> processedPool = new HashSet<>(loadUrlsFromDatabase(connection, "select * from LINKS_ALREADY_PROCESSED"));
+            //刚开始池子里的连接
             //判断池子是否未空
             if (listPool.isEmpty()) {
                 break;
@@ -34,12 +42,18 @@ public class Main {
             //每次从池子中拿个链接并且删除
             //arraylist从底部删除比较有效率，从前面删后面的元素需要挪位置 因为有空格
 //            String link = listPool.remove(listPool.size()-1);
+
+            //处理完从池子（包括数据库）中删除
             String link = listPool.remove(0);
+            insertLinkIntoDatabase(connection, "delete from LINKS_TO_BE_PROCESSED where link = ?", link);
+
 
             //判断该链接是否已经处理过，即processedpool中是含有该链接
-            if (processedPool.contains(link)) {
+            if (isLinkProcessed(connection, link)) {
                 continue;
             }
+
+
 
             //是不是我们想要的链接，contains实际上不准确
             if (isInterestingLink(link)) {//只处理新浪站内的链接
@@ -54,13 +68,52 @@ public class Main {
 
                     Document doc = parseHtml(response1);
 
-                    doc.select("a").stream().map(aTag -> aTag.attr("href")).forEach(listPool::add);
+                    parseUrlsFromPageAndStoreIntoDatabase(connection, doc);
 
                     storeIntoDatabaseIfISNewsPage(link2, doc);
+
+                    insertLinkIntoDatabase(connection, "insert into LINKS_ALREADY_PROCESSED (link) values (?)", link);
                 }
-                processedPool.add(String.valueOf(link2));
+//                processedPool.add(String.valueOf(link2));
             }
         }
+    }
+
+    private static void parseUrlsFromPageAndStoreIntoDatabase(Connection connection, Document doc) throws SQLException {
+        for (Element aTag : doc.select("a")) {
+            String href = aTag.attr("href");
+            insertLinkIntoDatabase(connection, "insert into LINKS_TO_BE_PROCESSED (link) values (?)", href);
+        }
+    }
+
+    private static boolean isLinkProcessed(Connection connection, String link) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("select * from LINKS_ALREADY_PROCESSED where link = ?")) {
+            statement.setString(1, link);
+            ResultSet resultSet = statement.executeQuery();
+            while (resultSet.next()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void insertLinkIntoDatabase(Connection connection, String sql, String link) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, link);
+            statement.executeUpdate();
+        }
+    }
+
+    private static List<String> loadUrlsFromDatabase(Connection connection, String sql) throws SQLException {
+        //从数据库里加载
+        List<String> res = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            ResultSet resultSet = statement.executeQuery();
+            while (resultSet.next()) {
+                res.add(resultSet.getString(1));
+            }
+        }
+        return res;
     }
 
     private static Document parseHtml(CloseableHttpResponse response1) throws IOException {
